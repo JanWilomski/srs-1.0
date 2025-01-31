@@ -1,0 +1,82 @@
+//@version=5 
+strategy("Range Breakout Strategy", overlay=true, margin_long=100, margin_short=100)
+// Parametry wejściowe 
+// //NASDAQ
+// openHour = input.int(9, "Godzina otwarcia", minval=0, maxval=23) 
+// openMinute = input.int(15, "Minuta otwarcia", minval=0, maxval=59) 
+
+//DAX
+openHour = input.int(8, "Godzina otwarcia", minval=0, maxval=23) 
+openMinute = input.int(0, "Minuta otwarcia", minval=0, maxval=59) 
+stopLossPips = input.int(10, "Stop Loss (pips)") 
+
+// Sprawdź czy timeframe to M15 
+if not (timeframe.isintraday and timeframe.multiplier == 15) 
+    runtime.error("Skrypt wymaga interwału 15-minutowego (M5)") 
+// Funkcja wykrywająca otwarcie rynku 
+isMarketOpen() => hour == openHour and minute == openMinute 
+// Zmienne do śledzenia zakresu 
+var float rangeHigh = na 
+var float rangeLow = na 
+var bool rangeSet = false 
+var bool orderplaced = false
+// Wykryj drugą świecę po otwarciu 
+var int barsSinceOpen = 0 
+var bool dailyTradeTaken = false
+if isMarketOpen() 
+    barsSinceOpen := 0 
+else 
+    barsSinceOpen += 1 
+if barsSinceOpen == 1 
+    rangeHigh := high 
+    rangeLow := low 
+    rangeSet := true 
+// Resetuj zakres na nowy dzień 
+// if ta.change(time("D")) 
+//     rangeSet := false 
+//     barsSinceOpen := na 
+//     dailyTradeTaken = false
+if hour==20
+    rangeSet := false 
+    barsSinceOpen := na 
+    dailyTradeTaken := false
+    orderplaced:=false
+// Warunki wejścia 
+// longCondition = rangeSet and close > rangeHigh and not dailyTradeTaken
+// shortCondition = rangeSet and close < rangeLow and not dailyTradeTaken
+// // Obliczanie poziomów SL/TP 
+// stopLossLong = rangeLow 
+// takeProfitLong = rangeHigh + (rangeHigh - rangeLow) 
+// stopLossShort = rangeHigh 
+// takeProfitShort = rangeLow - (rangeHigh - rangeLow) 
+// // Wejścia i wyjścia 
+// if longCondition
+//     dailyTradeTaken:=true
+//     strategy.entry("Long", strategy.long) 
+//     strategy.exit("Exit Long", "Long", stop=stopLossLong, limit=takeProfitLong) 
+
+// if shortCondition
+//     dailyTradeTaken:=true
+//     strategy.entry("Short", strategy.short) 
+//     strategy.exit("Exit Short", "Short", stop=stopLossShort, limit=takeProfitShort) 
+longCondition = isMarketOpen() and close < open 
+if longCondition 
+    // Odległość = rangeHigh - rangeLow 
+    float distance = rangeHigh - rangeLow 
+    float stopLoss = rangeLow 
+    float takeProf = rangeHigh + distance 
+    // 1:1 R:R 
+    // Otwieramy pozycję Long 
+    strategy.entry("Long", strategy.long) 
+    // Zlecenie wyjścia z pozycji (Stop Loss + Take Profit) 
+    strategy.exit("Long Exit", "Long", stop=close-20, limit=close+10) 
+    orderplaced:=true
+
+if barstate.isconfirmed
+    if strategy.position_size[1]==0 and strategy.position_size !=0
+        dailyTradeTaken:=true
+// Rysowanie zakresu 
+
+bgcolor(rangeSet ? color.new(color.blue, 90) : na) 
+plot(rangeSet ? rangeHigh : na, "Range High", color=color.green, style=plot.style_linebr) 
+plot(rangeSet ? rangeLow : na, "Range Low", color=color.red, style=plot.style_linebr)
