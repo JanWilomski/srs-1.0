@@ -1,84 +1,163 @@
-//@version=5 
-strategy("Range Breakout Strategy", overlay=true, margin_long=100, margin_short=100)
-// Parametry wejściowe 
-//NASDAQ
-// openHour = input.int(9, "Godzina otwarcia", minval=0, maxval=23) 
-// openMinute = input.int(15, "Minuta otwarcia", minval=0, maxval=59) 
+//@version=5
+strategy("Range Breakout Strategy - Druga szansa po SL",
+     overlay=true,
+     margin_long=100,
+     margin_short=100)
 
-//DAX
-openHour = input.int(1, "Godzina otwarcia", minval=0, maxval=23) 
-openMinute = input.int(45, "Minuta otwarcia", minval=0, maxval=59) 
-stopLossPips = input.int(10, "Stop Loss (pips)") 
+//nasdaq
+openHour   = input.int(9,   "Godzina otwarcia (HH)", minval=0, maxval=23)
+openMinute = input.int(15,  "Minuta otwarcia (MM)",  minval=0, maxval=59)
 
-// Sprawdź czy timeframe to M15 
-if not (timeframe.isintraday and timeframe.multiplier == 15) 
-    runtime.error("Skrypt wymaga interwału 15-minutowego (M15)") 
-// Funkcja wykrywająca otwarcie rynku 
-isMarketOpen() => hour == openHour and minute == openMinute 
-// Zmienne do śledzenia zakresu 
-var float rangeHigh = na 
-var float rangeLow = na 
-var bool rangeSet = false 
-var bool orderplaced = false
-// Wykryj drugą świecę po otwarciu 
-var int barsSinceOpen = 0 
-var bool dailyTradeTaken = false
-if isMarketOpen() 
-    barsSinceOpen := 0 
-else 
-    barsSinceOpen += 1 
-if barsSinceOpen == 2 
-    rangeHigh := high 
-    rangeLow := low 
-    rangeSet := true 
-// Resetuj zakres na nowy dzień 
-// if ta.change(time("D")) 
-//     rangeSet := false 
-//     barsSinceOpen := na 
-//     dailyTradeTaken = false
-if hour==20
-    rangeSet := false 
-    barsSinceOpen := na 
-    dailyTradeTaken := false
-    orderplaced:=false
-// Warunki wejścia 
-// longCondition = rangeSet and close > rangeHigh and not dailyTradeTaken
-// shortCondition = rangeSet and close < rangeLow and not dailyTradeTaken
-// // Obliczanie poziomów SL/TP 
-// stopLossLong = rangeLow 
-// takeProfitLong = rangeHigh + (rangeHigh - rangeLow) 
-// stopLossShort = rangeHigh 
-// takeProfitShort = rangeLow - (rangeHigh - rangeLow) 
-// // Wejścia i wyjścia 
-// if longCondition
-//     dailyTradeTaken:=true
-//     strategy.entry("Long", strategy.long) 
-//     strategy.exit("Exit Long", "Long", stop=stopLossLong, limit=takeProfitLong) 
-
-// if shortCondition
-//     dailyTradeTaken:=true
-//     strategy.entry("Short", strategy.short) 
-//     strategy.exit("Exit Short", "Short", stop=stopLossShort, limit=takeProfitShort) 
-
-if rangeSet and not dailyTradeTaken and not orderplaced
-    float distance = rangeHigh-rangeLow
-
-    strategy.order(id="LongStop", direction = strategy.long, stop=rangeHigh+5,oca_name = "RangeBreakOCA",oca_type = strategy.oca.cancel)
-    strategy.exit("LongStop Exit",from_entry = "LongStop",stop=rangeLow,limit = rangeHigh+distance*1.5)
-
-    strategy.order(id="ShortStop", direction = strategy.short, stop=rangeLow-5,oca_name = "RangeBreakOCA",oca_type = strategy.oca.cancel)
-    strategy.exit("ShortStop Exit",from_entry = "ShortStop",stop=rangeHigh,limit = rangeLow-distance*1.5)
-    orderplaced := true
+//dax
+//openHour   = input.int(1,   "Godzina otwarcia (HH)", minval=0, maxval=23)
+//openMinute = input.int(45,  "Minuta otwarcia (MM)",  minval=0, maxval=59)
 
 
-    
+// Wybrana godzina resetu (np. 20:00)
+resetHour   = input.int(20, "Godzina resetu (HH)",   minval=0, maxval=23)
+resetMinute = input.int(0,  "Minuta resetu (MM)",    minval=0, maxval=59)
+
+
+if not (timeframe.isintraday and timeframe.multiplier == 15)
+    runtime.error("Skrypt wymaga interwału 15-minutowego (M15)")
+
+
+var float rangeHigh       = na
+var float rangeLow        = na
+var bool  rangeSet        = false
+var int   barsSinceOpen   = na
+
+// Licznik transakcji w ciągu danego dnia (0, 1 lub 2)
+var int   dailyTradeCount = 0
+
+// Flagi pomocnicze, by nie składać wielokrotnie tych samych zleceń
+var bool  firstOrdersPlaced  = false
+var bool  secondOrdersPlaced = false
+
+
+bool isResetTime = (hour == resetHour and minute == resetMinute)
+if isResetTime
+    rangeHigh         := na
+    rangeLow          := na
+    rangeSet          := false
+    barsSinceOpen     := na
+    dailyTradeCount   := 0
+    firstOrdersPlaced := false
+    secondOrdersPlaced:= false
+
+//-----------------------------------------------------
+// FUNKCJA: CZY MAMY GODZINĘ OTWARCIA?
+//-----------------------------------------------------
+isMarketOpen() =>
+    hour == openHour and minute == openMinute
+
+
+if isMarketOpen()
+    barsSinceOpen := 0
+else
+    if not na(barsSinceOpen)
+        barsSinceOpen += 1
+
+//-----------------------------------------------------
+// WYZNACZENIE RANGE (DRUGA ŚWIECA PO OTWARCIA SESJI)
+//-----------------------------------------------------
+if barsSinceOpen == 2
+    rangeHigh := high
+    rangeLow  := low
+    rangeSet  := true
+    // Pozwalamy złożyć zlecenia pierwszej transakcji
+    firstOrdersPlaced := false
+
+
+if rangeSet and dailyTradeCount == 0 and not firstOrdersPlaced
+    float distance = rangeHigh - rangeLow
+
+    // Zamówienie LONG STOP (z OCA - One Cancels All)
+    strategy.order("LongStop1", strategy.long,
+       stop     = rangeHigh, 
+       oca_name = "FirstTradeOCA", 
+       oca_type = strategy.oca.cancel)
+
+    // Wyjście z pozycji Long (Stop Loss / Take Profit)
+    strategy.exit("LongStop1 Exit", from_entry="LongStop1",
+       stop = rangeLow,
+       limit= rangeHigh + distance * 2)
+
+    // Zamówienie SHORT STOP
+    strategy.order("ShortStop1", strategy.short,
+       stop     = rangeLow,
+       oca_name = "FirstTradeOCA",
+       oca_type = strategy.oca.cancel)
+
+    // Wyjście z pozycji Short (Stop Loss / Take Profit)
+    strategy.exit("ShortStop1 Exit", from_entry="ShortStop1",
+       stop = rangeHigh,
+       limit= rangeLow - distance * 2)
+
+    firstOrdersPlaced := true
 
 
 if barstate.isconfirmed
-    if strategy.position_size[1]==0 and strategy.position_size !=0
-        dailyTradeTaken:=true
-// Rysowanie zakresu 
+    // Czy przybyła nam nowa transakcja zamknięta?
+    // (np. z 0 -> 1, co oznacza, że właśnie zamknęliśmy 1-szą)
+    int closedNow = strategy.closedtrades - strategy.closedtrades[1]
+    if closedNow > 0
+        // Indeks ostatnio zamkniętej transakcji
+        int lastClosedIndex = strategy.closedtrades - 1
+        // Zysk/strata tej transakcji
+        float lastTradePNL  = strategy.closedtrades.profit(lastClosedIndex)
 
-bgcolor(rangeSet ? color.new(color.blue, 90) : na) 
-plot(rangeSet ? rangeHigh : na, "Range High", color=color.green, style=plot.style_linebr) 
-plot(rangeSet ? rangeLow : na, "Range Low", color=color.red, style=plot.style_linebr)
+        // Jeśli to była pierwsza transakcja (dailyTradeCount == 0)
+        if dailyTradeCount == 0
+            // Jeżeli PNL < 0 => była stratna => pozwalamy na drugą transakcję
+            if lastTradePNL < 0
+                // Zwiększamy licznik do 1
+                dailyTradeCount := 1
+                // Pozwalamy wystawić drugie zlecenie w przeciwnym kierunku
+                secondOrdersPlaced := false
+            else
+                // Była zyskowna, więc kończymy handel na dziś
+                dailyTradeCount := 2
+
+        // Jeśli to była druga transakcja (dailyTradeCount == 1)
+        else if dailyTradeCount == 1
+            // Po drugiej transakcji (nieważne, zysk/strata) kończymy handel
+            dailyTradeCount := 2
+
+
+if rangeSet and dailyTradeCount == 1 and not secondOrdersPlaced
+    
+
+    // Sprawdzamy szczegóły ostatniej transakcji zamkniętej
+    int lastClosedIdx  = strategy.closedtrades - 1
+    float distance     = rangeHigh - rangeLow
+
+    float closedTradeSize = strategy.closedtrades.size(lastClosedIdx)
+    bool wasLong = closedTradeSize > 0
+    if wasLong
+        // Pierwsza transakcja była LONG i przegrała na SL -> otwieramy SHORT
+        strategy.order("ShortStop2", strategy.short,
+           stop=rangeLow,
+           oca_name="SecondTradeOCA",
+           oca_type=strategy.oca.cancel)
+
+        strategy.exit("ShortStop2 Exit", from_entry="ShortStop2",
+           stop = rangeHigh,
+           limit= rangeLow - distance * 2)
+    else
+        // Pierwsza transakcja była SHORT i przegrała -> otwieramy LONG
+        strategy.order("LongStop2", strategy.long,
+           stop=rangeHigh,
+           oca_name="SecondTradeOCA",
+           oca_type=strategy.oca.cancel)
+
+        strategy.exit("LongStop2 Exit", from_entry="LongStop2",
+           stop = rangeLow,
+           limit= rangeHigh + distance * 2)
+
+    secondOrdersPlaced := true
+
+//visual
+bgcolor(rangeSet ? color.new(color.blue, 90) : na)
+plot(rangeSet ? rangeHigh : na, "Range High", color=color.green, style=plot.style_linebr)
+plot(rangeSet ? rangeLow  : na, "Range Low",  color=color.red,   style=plot.style_linebr)
