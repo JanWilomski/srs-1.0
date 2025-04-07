@@ -12,7 +12,7 @@ input int extrapips = 0;
 // Parametry wejściowe NASDAQ
 int    StartHour   = 16;     // Godzina otwarcia indeksu
 int    StartMinute = 15;     // Minuta otwarcia indeksu
-double Lots        = 0.4;   // Wielkość pozycji (loty)
+input double Lots        = 0.5;   // Wielkość pozycji (loty)
 
 // Parametry wejściowe DAX
 //int    StartHour   = 9;     // Godzina otwarcia indeksu
@@ -135,8 +135,8 @@ void OnTick()
 void OpenBuy(double highRange, double lowRange)
 {
    double distance = highRange - lowRange; 
-   double sl = lowRange- distance*rrsl;
-   double tp = highRange + distance+distance*rrtp;       
+   double sl = highRange- distance*rrsl;
+   double tp = highRange+distance*rrtp;       
 
    MqlTradeRequest request;
    MqlTradeResult  result;
@@ -181,8 +181,8 @@ void OpenBuy(double highRange, double lowRange)
 void OpenSell(double highRange, double lowRange)
 {
    double distance = highRange - lowRange;
-   double sl = highRange+distance*rrsl;
-   double tp = lowRange - distance-distance*rrtp; 
+   double sl = lowRange+distance*rrsl;
+   double tp = lowRange - distance*rrtp; 
 
    MqlTradeRequest request;
    MqlTradeResult  result;
