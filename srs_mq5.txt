@@ -1,0 +1,221 @@
+//+------------------------------------------------------------------+
+//| Expert: RangeBreakout_M15                                        |
+//+------------------------------------------------------------------+
+#property copyright "Przykład"
+#property version   "1.00"
+#property strict
+
+input double rrtp = 1;
+input double rrsl = 0;
+input int extrapips = 0;
+
+// Parametry wejściowe NASDAQ
+int    StartHour   = 16;     // Godzina otwarcia indeksu
+int    StartMinute = 15;     // Minuta otwarcia indeksu
+double Lots        = 0.4;   // Wielkość pozycji (loty)
+
+// Parametry wejściowe DAX
+//int    StartHour   = 9;     // Godzina otwarcia indeksu
+//int    StartMinute = 0;     // Minuta otwarcia indeksu
+//double Lots        = 10;   // Wielkość pozycji (loty)
+
+// Parametry wejściowe NIKKEI
+//int    StartHour   = 2;     // Godzina otwarcia indeksu
+//int    StartMinute = 0;     // Minuta otwarcia indeksu
+//double Lots        = 10;   // Wielkość pozycji (loty)
+
+
+// Zmienne globalne
+int   tradesOpenedToday  = 0; 
+int    currentDay        = -1;    
+double secondCandleHigh  = 0.0;  
+double secondCandleLow   = 0.0;  
+bool   rangeSet          = false; 
+
+//+------------------------------------------------------------------+
+//| OnInit                                                           |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("EA RangeBreakout_M15 został zainicjalizowany.");
+
+   // Ustal currentDay na dzisiejszy dzień
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   currentDay = dt.day;
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| OnTick                                                           |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // 1) Sprawdź, czy zmienił się dzień (nowy dzień)
+   MqlDateTime dtNow;
+   TimeToStruct(TimeCurrent(), dtNow);
+   int dayNow = dtNow.day;
+
+   if(dayNow != currentDay)
+   {
+      // Zresetuj wartości na nowy dzień
+      currentDay       = dayNow;
+      tradesOpenedToday = 0;
+     
+      rangeSet         = false;
+      secondCandleHigh = 0.0;
+      secondCandleLow  = 0.0;
+   }
+
+   // 2) Ustal zakres drugiej świecy (jeśli jeszcze nie ustalony)
+   if(!rangeSet)
+   {
+      // Obliczamy docelowy czas zamknięcia drugiej świecy
+      MqlDateTime dateTime;
+      TimeToStruct(TimeCurrent(), dateTime);
+
+      dateTime.hour = StartHour;
+      dateTime.min  = StartMinute + 30; // Druga świeca M15 skończy się 30 min po starcie
+      dateTime.sec  = 0;
+
+      datetime secondCandleCloseTime = StructToTime(dateTime);
+
+      // Jeżeli obecny czas >= secondCandleCloseTime, to druga świeca M15 jest zamknięta
+      if(TimeCurrent() >= secondCandleCloseTime)
+      {
+         // Znajdź indeks tej świecy
+         datetime searchTime = secondCandleCloseTime - 1; 
+         int barIndex = iBarShift(_Symbol, PERIOD_M15, searchTime, false);
+
+         if(barIndex >= 0)
+         {
+            secondCandleHigh = iHigh(_Symbol, PERIOD_M15, barIndex);
+            secondCandleLow  = iLow(_Symbol, PERIOD_M15, barIndex);
+
+            rangeSet = true;
+            Print("Ustalono zakres drugiej świecy (M15): High=", 
+                  DoubleToString(secondCandleHigh, 5),
+                  ", Low=", DoubleToString(secondCandleLow, 5));
+         }
+      }
+   }
+
+   // 3) Sprawdź wybicie – ale tylko jeśli (a) mamy zakres i (b) jeszcze nie handlowaliśmy dziś
+   if(rangeSet && tradesOpenedToday<=1)
+   {
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+      // Wybicie górą
+      if(bid > secondCandleHigh+extrapips)
+      {
+         // **Najpierw** blokujemy handel na dziś, żeby nie otwierać wielu transakcji
+         tradesOpenedToday +=1;
+         
+
+         // Następnie wysyłamy zlecenie BUY
+         OpenBuy(secondCandleHigh, secondCandleLow);
+      }
+      // Wybicie dołem
+      else if(ask < secondCandleLow-extrapips)
+      {
+         // Również natychmiast blokujemy handel na dziś
+         tradesOpenedToday +=1;
+
+         // A potem wysyłamy zlecenie SELL
+         OpenSell(secondCandleHigh, secondCandleLow);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Funkcja otwierająca zlecenie BUY                                 |
+//+------------------------------------------------------------------+
+void OpenBuy(double highRange, double lowRange)
+{
+   double distance = highRange - lowRange; 
+   double sl = lowRange- distance*rrsl;
+   double tp = highRange + distance+distance*rrtp;       
+
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+
+   request.action         = TRADE_ACTION_DEAL;   
+   request.symbol         = _Symbol;
+   request.volume         = Lots;
+   request.type           = ORDER_TYPE_BUY;
+   request.price          = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   request.sl             = NormalizeDouble(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   request.tp             = NormalizeDouble(tp, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   request.deviation      = 10;  
+   request.magic          = 12345;
+   request.comment        = "RangeBreakout BUY";
+
+   bool ok = OrderSend(request, result);
+   if(!ok)
+   {
+      Print("Błąd otwierania BUY: ", GetLastError());
+      // Tutaj ewentualnie *też* możesz ustawić tradeOpenedToday = true;
+      // ale w naszym kodzie i tak już ustawiliśmy to przed wywołaniem OpenBuy().
+      return;
+   }
+
+   if(result.retcode == TRADE_RETCODE_DONE)
+   {
+      Print("BUY otwarta. Ticket = ", result.order);
+       tradesOpenedToday +=1; // (opcjonalne – my ustawiamy to wcześniej)
+   }
+   else
+   {
+      Print("Błąd otwierania BUY, retcode = ", result.retcode);
+      // ewentualnie też: tradeOpenedToday = true;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Funkcja otwierająca zlecenie SELL                                |
+//+------------------------------------------------------------------+
+void OpenSell(double highRange, double lowRange)
+{
+   double distance = highRange - lowRange;
+   double sl = highRange+distance*rrsl;
+   double tp = lowRange - distance-distance*rrtp; 
+
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+
+   request.action         = TRADE_ACTION_DEAL;
+   request.symbol         = _Symbol;
+   request.volume         = Lots;
+   request.type           = ORDER_TYPE_SELL;
+   request.price          = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   request.sl             = NormalizeDouble(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   request.tp             = NormalizeDouble(tp, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+   request.deviation      = 10;  
+   request.magic          = 12345;
+   request.comment        = "RangeBreakout SELL";
+
+   bool ok = OrderSend(request, result);
+   if(!ok)
+   {
+      Print("Błąd otwierania SELL: ", GetLastError());
+       tradesOpenedToday += 1; // ale i tak już ustawione
+      return;
+   }
+
+   if(result.retcode == TRADE_RETCODE_DONE)
+   {
+      Print("SELL otwarta. Ticket = ", result.order);
+       tradesOpenedToday +=1; // (opcjonalne)
+   }
+   else
+   {
+      Print("Błąd otwierania SELL, retcode = ", result.retcode);
+       tradesOpenedToday +=1;
+   }
+}
